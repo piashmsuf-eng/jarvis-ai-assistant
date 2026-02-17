@@ -1,0 +1,215 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, develop, modern-refactor ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+
+env:
+  PYTHON_VERSION: '3.11'
+  BUILDOZER_VERSION: '1.5.0'
+  
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3-pip \
+          build-essential \
+          git \
+          ffmpeg \
+          libsdl2-dev \
+          libsdl2-image-dev \
+          libsdl2-mixer-dev \
+          libsdl2-ttf-dev \
+          libportmidi-dev \
+          libswscale-dev \
+          libavformat-dev \
+          libavcodec-dev \
+          zlib1g-dev \
+          libgstreamer1.0-0 \
+          gstreamer1.0-plugins-base \
+          gstreamer1.0-plugins-good \
+          openjdk-17-jdk \
+          unzip \
+          ccache \
+          autoconf \
+          libtool \
+          pkg-config \
+          cmake
+          
+    - name: Install Android SDK & NDK
+      run: |
+        # Create Android SDK directory
+        mkdir -p $HOME/.android/sdk
+        cd $HOME/.android/sdk
+        
+        # Download Android command line tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+        unzip -q commandlinetools-linux-11076708_latest.zip
+        rm commandlinetools-linux-11076708_latest.zip
+        
+        # Set up environment variables
+        export ANDROID_HOME=$HOME/.android/sdk
+        export PATH=$PATH:$ANDROID_HOME/cmdline-tools/bin:$ANDROID_HOME/platform-tools
+        
+        # Accept licenses
+        yes | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses
+        
+        # Install required Android components
+        $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=$ANDROID_HOME --install \
+          "platform-tools" \
+          "platforms;android-33" \
+          "build-tools;33.0.2" \
+          "ndk;25.2.9519653"
+          
+    - name: Cache Buildozer
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.buildozer
+          ~/.cache/pip
+        key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          ${{ runner.os }}-buildozer-
+          
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        # Install setuptools explicitly for compatibility
+        pip install setuptools
+        pip install buildozer==${{ env.BUILDOZER_VERSION }}
+        pip install cython==3.0.10
+        # Install core dependencies only (skip problematic ones for CI)
+        pip install python-dotenv requests
+        
+    - name: Create Environment File
+      run: |
+        # Create .env file with placeholder values for build
+        # Note: Real API keys should be added at runtime, not during build
+        cat > .env << EOF
+        GROQ_API_KEY=placeholder_for_build
+        CARTESIA_API_KEY=placeholder_for_build
+        LETTA_API_KEY=placeholder_for_build
+        GROQ_MODEL=llama3-70b-8192
+        CARTESIA_VOICE_ID=sonic-english
+        CARTESIA_MODEL_ID=sonic-multilingual-v1
+        LETTA_AGENT_ID=placeholder_for_build
+        WHISPER_MODEL=base
+        EOF
+        
+    - name: Build APK with Buildozer
+      env:
+        ANDROID_HOME: $HOME/.android/sdk
+        ANDROID_NDK_HOME: $HOME/.android/sdk/ndk/25.2.9519653
+        ANDROID_SDK_ROOT: $HOME/.android/sdk
+        PATH: $PATH:$HOME/.android/sdk/platform-tools:$HOME/.android/sdk/cmdline-tools/bin
+      run: |
+        # Set build type based on input or default to debug
+        BUILD_TYPE=${{ github.event.inputs.build_type || 'debug' }}
+        
+        # Initialize buildozer first time
+        yes | buildozer init || true
+        
+        # Ensure buildozer.spec exists
+        if [ ! -f buildozer.spec ]; then
+          cp buildozer.spec.example buildozer.spec 2>/dev/null || true
+        fi
+        
+        # Build the APK (skip clean on first run)
+        buildozer -v android $BUILD_TYPE
+        
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: jarvis-ai-${{ github.event.inputs.build_type || 'debug' }}-${{ github.run_number }}.apk
+        path: bin/*.apk
+        retention-days: 30
+        
+    - name: Create Release (Optional - on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: bin/*.apk
+        draft: false
+        prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}
+        generate_release_notes: true
+        
+    - name: Upload Build Logs on Failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: |
+          .buildozer/logs/
+          *.log
+        retention-days: 7
+
+  test-apk:
+    name: Test APK Installation
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download APK Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: jarvis-ai-${{ github.event.inputs.build_type || 'debug' }}-${{ github.run_number }}.apk
+        
+    - name: Setup Android Emulator
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 29
+        arch: x86_64
+        profile: Nexus 6
+        avd-name: test-emulator
+        emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+        disable-animations: true
+        script: |
+          # Install APK on emulator
+          adb install *.apk
+          # Launch the app
+          adb shell am start -n com.jarvis.jarvisai/org.kivy.android.PythonActivity
+          # Wait for app to load
+          sleep 10
+          # Take screenshot for verification
+          adb shell screencap -p /sdcard/screenshot.png
+          adb pull /sdcard/screenshot.png
+          
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: |
+          screenshot.png
+          *.log
+        retention-days: 7

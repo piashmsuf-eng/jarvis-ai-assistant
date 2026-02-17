@@ -1,0 +1,12 @@
+# Simplified requirements for Android build
+# Core dependencies only
+
+# Essential libraries
+python-dotenv==1.0.1
+requests==2.31.0
+certifi==2024.2.2
+
+# Kivy for UI (these are handled by buildozer)
+# kivy==2.3.0
+# kivymd==1.2.0
+# plyer==2.1.0
