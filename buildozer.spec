@@ -36,7 +36,7 @@ version = 2.0.0
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy==2.3.0,kivymd==1.2.0,plyer,groq,httpx,websockets,aiohttp,numpy,scipy,sounddevice,faster-whisper,pydub,python-dotenv,pydantic,pydantic-settings,requests,json5,python-dateutil,tenacity,certifi,chardet,idna,urllib3,openai-whisper
+requirements = python3,kivy==2.3.0,kivymd==1.2.0,plyer,requests,httpx,websockets,aiohttp,numpy,scipy,pydub,python-dotenv,pydantic,certifi,chardet,idna,urllib3
 
 # (str) Custom source folders for requirements
 # Sets custom source for any requirements with recipes
