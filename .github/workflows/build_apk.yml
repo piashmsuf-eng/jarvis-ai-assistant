@@ -127,19 +127,23 @@ jobs:
         
     - name: Build APK with Buildozer
       env:
-        ANDROID_HOME: ${{ github.workspace }}/.android/sdk
-        ANDROID_NDK_HOME: ${{ github.workspace }}/.android/sdk/ndk/25.2.9519653
+        ANDROID_HOME: $HOME/.android/sdk
+        ANDROID_NDK_HOME: $HOME/.android/sdk/ndk/25.2.9519653
+        ANDROID_SDK_ROOT: $HOME/.android/sdk
+        PATH: $PATH:$HOME/.android/sdk/platform-tools:$HOME/.android/sdk/cmdline-tools/bin
       run: |
         # Set build type based on input or default to debug
         BUILD_TYPE=${{ github.event.inputs.build_type || 'debug' }}
         
-        # Clean previous builds
-        rm -rf .buildozer/android/platform/build-*
+        # Initialize buildozer first time
+        yes | buildozer init || true
         
-        # Initialize buildozer if needed
-        buildozer android clean
+        # Ensure buildozer.spec exists
+        if [ ! -f buildozer.spec ]; then
+          cp buildozer.spec.example buildozer.spec 2>/dev/null || true
+        fi
         
-        # Build the APK
+        # Build the APK (skip clean on first run)
         buildozer -v android $BUILD_TYPE
         
     - name: Upload APK Artifact
